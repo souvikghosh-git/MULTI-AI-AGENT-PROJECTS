@@ -4,14 +4,15 @@ FROM jenkins/jenkins:lts
 # Switch to root user to install dependencies
 USER root
 
-# Install prerequisites and Docker (compatible with Debian Trixie)
+# Install prerequisites, Docker and AWS CLI (compatible with Debian Trixie)
 RUN apt-get update -y && \
     apt-get install -y \
         apt-transport-https \
         ca-certificates \
         curl \
         gnupg \
-        lsb-release && \
+        lsb-release \
+        unzip && \
     install -m 0755 -d /etc/apt/keyrings && \
     curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
     chmod a+r /etc/apt/keyrings/docker.gpg && \
@@ -19,6 +20,10 @@ RUN apt-get update -y && \
         > /etc/apt/sources.list.d/docker.list && \
     apt-get update -y && \
     apt-get install -y docker-ce docker-ce-cli containerd.io && \
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip -q awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip aws && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
