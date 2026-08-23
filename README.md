@@ -167,8 +167,16 @@ aws cloudformation deploy \
 
 ---
 
-## 🔄 Jenkins CI/CD Pipeline
-The [`Jenkinsfile`](./Jenkinsfile) executes 4 automated stages on every push:
+## 🔄 Automated Jenkins CI/CD Setup (Configuration as Code)
+
+Jenkins is **100% automated as code** through [`custom_jenkins/Dockerfile`](./custom_jenkins/Dockerfile) and initialization Groovy scripts in [`custom_jenkins/init.groovy.d/`](./custom_jenkins/init.groovy.d/):
+
+- **No Setup Wizard**: `-Djenkins.install.runSetupWizard=false`
+- **Pre-installed Plugins**: `git`, `workflow-aggregator`, `pipeline-stage-view`, `sonar`, `credentials-binding`, `timestamper`
+- **Default Admin Account**: Username `admin` / Password `admin123`
+- **Auto-Provisioned Job**: `multi-ai-agent-pipeline` is automatically created on startup, tracking `Jenkinsfile` on `main`.
+
+### The [`Jenkinsfile`](./Jenkinsfile) executes 4 automated stages:
 
 ```groovy
 pipeline {
