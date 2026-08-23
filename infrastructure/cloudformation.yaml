@@ -424,7 +424,10 @@ Resources:
             --restart unless-stopped \
             sonarqube:lts-community
 
-          # Start Jenkins
+          # Build and launch Custom Jenkins (Automated Plugins, Admin User, Pipeline Job)
+          cd /tmp/build-repo/custom_jenkins
+          docker build -t custom-jenkins:latest .
+
           docker run -d \
             --name jenkins \
             --network jenkins-net \
@@ -434,7 +437,7 @@ Resources:
             -v jenkins_home:/var/jenkins_home \
             -v /var/run/docker.sock:/var/run/docker.sock \
             --restart unless-stopped \
-            jenkins/jenkins:lts
+            custom-jenkins:latest
       Tags:
         - Key: Name
           Value: !Sub "jenkins-server-${EnvironmentName}"

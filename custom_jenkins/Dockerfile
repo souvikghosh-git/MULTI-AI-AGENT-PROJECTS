@@ -27,6 +27,21 @@ RUN apt-get update -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# Disable setup wizard
+ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false"
+
+# Pre-install essential plugins
+RUN jenkins-plugin-cli --plugins \
+    git \
+    workflow-aggregator \
+    pipeline-stage-view \
+    credentials-binding \
+    timestamper \
+    sonar
+
+# Copy automated initialization scripts (admin user, pipeline job, security)
+COPY init.groovy.d/ /usr/share/jenkins/ref/init.groovy.d/
+
 # Add Jenkins user to the Docker group (create if it doesn't exist)
 RUN groupadd -f docker && \
     usermod -aG docker jenkins
