@@ -1,0 +1,401 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  AWS CloudFormation Template for Multi-AI-Agent LLMOps Infrastructure.
+  Provisions Secrets Manager, ECR, ECS Fargate Cluster & Service,
+  IAM Roles, Security Groups, CloudWatch Logs, and optional Jenkins/SonarQube EC2 instance.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: prod
+    Description: Environment name prefix for resources (e.g., prod, dev, staging).
+
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    Description: API Key for Groq Cloud.
+
+  TavilyApiKey:
+    Type: String
+    NoEcho: true
+    Description: API Key for Tavily Web Search.
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The VPC where resources will be deployed (use Default VPC).
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of Public Subnets in the VPC for ECS and Jenkins.
+
+  EcrRepositoryName:
+    Type: String
+    Default: my-repo
+    Description: Name for the ECR Docker repository.
+
+  DeployJenkinsServer:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Whether to provision an EC2 instance for Jenkins & SonarQube.
+
+  JenkinsInstanceType:
+    Type: String
+    Default: m7i-flex.large
+    Description: EC2 Instance Type for Jenkins & SonarQube.
+
+  JenkinsKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: jenkins-key
+    Description: EC2 Key Pair for SSH access to the Jenkins server.
+
+Conditions:
+  ShouldDeployJenkins: !Equals [!Ref DeployJenkinsServer, 'true']
+
+Resources:
+  # =========================================================================
+  # 1. AWS Secrets Manager
+  # =========================================================================
+  GroqApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "multi-ai-agent/groq-api-key-${EnvironmentName}"
+      Description: "Groq API Key for Multi AI Agent"
+      SecretString: !Ref GroqApiKey
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  TavilyApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "multi-ai-agent/tavily-api-key-${EnvironmentName}"
+      Description: "Tavily API Key for Multi AI Agent"
+      SecretString: !Ref TavilyApiKey
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # =========================================================================
+  # 2. Amazon ECR Repository
+  # =========================================================================
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref EcrRepositoryName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only last 10 untagged images",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # =========================================================================
+  # 3. CloudWatch Log Group
+  # =========================================================================
+  EcsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/multi-ai-agent-${EnvironmentName}"
+      RetentionInDays: 30
+
+  # =========================================================================
+  # 4. IAM Roles & Policies
+  # =========================================================================
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "ecsTaskExecutionRole-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  - !Ref GroqApiKeySecret
+                  - !Ref TavilyApiKeySecret
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "ecsTaskRole-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TaskSecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref GroqApiKeySecret
+                  - !Ref TavilyApiKeySecret
+
+  # =========================================================================
+  # 5. Security Groups
+  # =========================================================================
+  EcsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security Group for Multi-AI-Agent ECS Tasks"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8501
+          ToPort: 8501
+          CidrIp: 0.0.0.0/0
+          Description: "Streamlit UI Port"
+        - IpProtocol: tcp
+          FromPort: 9999
+          ToPort: 9999
+          CidrIp: 0.0.0.0/0
+          Description: "FastAPI Backend Port"
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: "Allow all outbound traffic"
+      Tags:
+        - Key: Name
+          Value: !Sub "multi-ai-agent-ecs-sg-${EnvironmentName}"
+
+  JenkinsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: ShouldDeployJenkins
+    Properties:
+      GroupDescription: "Security Group for Jenkins & SonarQube Server"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: "SSH access"
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+          Description: "Jenkins UI"
+        - IpProtocol: tcp
+          FromPort: 9000
+          ToPort: 9000
+          CidrIp: 0.0.0.0/0
+          Description: "SonarQube UI"
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "jenkins-sg-${EnvironmentName}"
+
+  # =========================================================================
+  # 6. ECS Cluster
+  # =========================================================================
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "multi-ai-agent-cluster-${EnvironmentName}"
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # =========================================================================
+  # 7. ECS Task Definition
+  # =========================================================================
+  EcsTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "multi-ai-agent-def-${EnvironmentName}"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: multi-ai-agent
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}:latest"
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8501
+              Protocol: tcp
+            - ContainerPort: 9999
+              Protocol: tcp
+          Environment:
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+          Secrets:
+            - Name: GROQ_API_KEY
+              ValueFrom: !Ref GroqApiKeySecret
+            - Name: TAVILY_API_KEY
+              ValueFrom: !Ref TavilyApiKeySecret
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref EcsLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  # =========================================================================
+  # 8. ECS Service
+  # =========================================================================
+  EcsService:
+    Type: AWS::ECS::Service
+    DependsOn: EcsTaskDefinition
+    Properties:
+      ServiceName: !Sub "multi-ai-agent-service-${EnvironmentName}"
+      Cluster: !Ref EcsCluster
+      TaskDefinition: !Ref EcsTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref EcsSecurityGroup
+          Subnets: !Ref SubnetIds
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # =========================================================================
+  # 9. Jenkins EC2 Instance (Optional)
+  # =========================================================================
+  JenkinsInstance:
+    Type: AWS::EC2::Instance
+    Condition: ShouldDeployJenkins
+    Properties:
+      InstanceType: !Ref JenkinsInstanceType
+      KeyName: !Ref JenkinsKeyName
+      ImageId: ami-06e78a71af43ef21a # Ubuntu 22.04 LTS (us-east-1)
+      SecurityGroupIds:
+        - !Ref JenkinsSecurityGroup
+      SubnetId: !Select [0, !Ref SubnetIds]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -e
+          apt-get update -y
+          apt-get install -y docker.io docker-compose curl unzip git
+          usermod -aG docker ubuntu
+          systemctl enable docker
+          systemctl start docker
+          chmod 666 /var/run/docker.sock
+
+          # Install AWS CLI
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install
+          rm -rf awscliv2.zip aws
+
+          # Create network
+          docker network create jenkins-net || true
+
+          # Start SonarQube
+          docker run -d \
+            --name sonarqube-dind \
+            --network jenkins-net \
+            -p 9000:9000 \
+            --restart unless-stopped \
+            sonarqube:lts-community
+
+          # Start Jenkins
+          docker run -d \
+            --name jenkins \
+            --network jenkins-net \
+            --privileged \
+            -p 8080:8080 \
+            -p 50000:50000 \
+            -v jenkins_home:/var/jenkins_home \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            --restart unless-stopped \
+            jenkins/jenkins:lts
+      Tags:
+        - Key: Name
+          Value: !Sub "jenkins-server-${EnvironmentName}"
+
+Outputs:
+  EcrRepositoryUri:
+    Description: The URI of the ECR Repository
+    Value: !GetAtt EcrRepository.RepositoryUri
+    Export:
+      Name: !Sub "${AWS::StackName}-EcrRepoUri"
+
+  EcsClusterName:
+    Description: Name of the ECS Cluster
+    Value: !Ref EcsCluster
+
+  EcsServiceName:
+    Description: Name of the ECS Service
+    Value: !GetAtt EcsService.Name
+
+  GroqSecretArn:
+    Description: ARN of the Groq API Key Secret
+    Value: !Ref GroqApiKeySecret
+
+  TavilySecretArn:
+    Description: ARN of the Tavily API Key Secret
+    Value: !Ref TavilyApiKeySecret
+
+  JenkinsPublicIp:
+    Description: Public IP of the Jenkins & SonarQube Server
+    Condition: ShouldDeployJenkins
+    Value: !GetAtt JenkinsInstance.PublicIp
+
+  JenkinsUrl:
+    Description: URL for Jenkins Web Console
+    Condition: ShouldDeployJenkins
+    Value: !Sub "http://${JenkinsInstance.PublicIp}:8080"
+
+  SonarQubeUrl:
+    Description: URL for SonarQube Web Console
+    Condition: ShouldDeployJenkins
+    Value: !Sub "http://${JenkinsInstance.PublicIp}:9000"

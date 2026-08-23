@@ -142,16 +142,32 @@ docker run -p 8501:8501 -p 9999:9999 --env-file .env multi-ai-agent:latest
 
 ---
 
-## ☁️ Production Deployment on AWS
+## ☁️ Infrastructure as Code (AWS CloudFormation)
 
-### 1. AWS Services Setup
-1. **Secrets Manager**: Create secrets `multi-ai-agent/groq-api-key` and `multi-ai-agent/tavily-api-key`.
-2. **ECR Repository**: Create an ECR repository named `my-repo`.
-3. **IAM Roles**: Create `ecsTaskExecutionRole` with `AmazonECSTaskExecutionRolePolicy` and `SecretsManagerReadWrite`.
-4. **ECS Cluster & Service**: Create ECS Cluster `multi-ai-agent-cluster` and Fargate service `multi-ai-agent-def-service-shqlo39p`.
-5. **Security Groups**: Open ports `8501` (Streamlit) and `9999` (FastAPI).
+You can provision the entire AWS infrastructure (**Secrets Manager, ECR, ECS Cluster & Service, IAM Roles, Security Groups, CloudWatch Logs, and Jenkins/SonarQube Server**) in a single automated step using the CloudFormation template in [`infrastructure/cloudformation.yaml`](./infrastructure/cloudformation.yaml).
 
-### 2. Jenkins CI/CD Pipeline
+### 🚀 1-Click Automated Deployment Script:
+```bash
+./infrastructure/deploy.sh multi-ai-agent-stack
+```
+
+### Or Deploy via AWS CLI:
+```bash
+aws cloudformation deploy \
+  --template-file infrastructure/cloudformation.yaml \
+  --stack-name multi-ai-agent-stack \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides \
+      GroqApiKey="your_groq_api_key" \
+      TavilyApiKey="your_tavily_api_key" \
+      VpcId="vpc-xxxxxx" \
+      SubnetIds="subnet-xxxxxx,subnet-yyyyyy" \
+  --region us-east-1
+```
+
+---
+
+## 🔄 Jenkins CI/CD Pipeline
 The [`Jenkinsfile`](./Jenkinsfile) executes 4 automated stages on every push:
 
 ```groovy
