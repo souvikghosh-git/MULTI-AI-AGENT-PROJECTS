@@ -1,4 +1,5 @@
 venv/
 MULTI_AI_AGENT.egg-info/
 logs/
-.env
+.env.env
+venv/
