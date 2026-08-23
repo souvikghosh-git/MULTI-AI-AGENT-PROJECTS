@@ -168,6 +168,30 @@ Resources:
                   - !Ref GroqApiKeySecret
                   - !Ref TavilyApiKeySecret
 
+  JenkinsEc2Role:
+    Type: AWS::IAM::Role
+    Condition: ShouldDeployJenkins
+    Properties:
+      RoleName: !Sub "jenkinsEc2Role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+        - arn:aws:iam::aws:policy/AmazonECS_FullAccess
+
+  JenkinsInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: ShouldDeployJenkins
+    Properties:
+      InstanceProfileName: !Sub "jenkinsInstanceProfile-${EnvironmentName}"
+      Roles:
+        - !Ref JenkinsEc2Role
+
   # =========================================================================
   # 5. Security Groups
   # =========================================================================
@@ -310,6 +334,7 @@ Resources:
     Properties:
       InstanceType: !Ref JenkinsInstanceType
       KeyName: !Ref JenkinsKeyName
+      IamInstanceProfile: !Ref JenkinsInstanceProfile
       ImageId: ami-06e78a71af43ef21a # Ubuntu 22.04 LTS (us-east-1)
       SecurityGroupIds:
         - !Ref JenkinsSecurityGroup
@@ -320,7 +345,7 @@ Resources:
             VolumeSize: 30
             VolumeType: gp3
       UserData:
-        Fn::Base64: |
+        Fn::Base64: !Sub |
           #!/bin/bash
           set -e
           apt-get update -y
@@ -338,6 +363,18 @@ Resources:
 
           # Create network
           docker network create jenkins-net || true
+
+          # Build and push initial application image to ECR
+          rm -rf /tmp/build-repo
+          git clone https://github.com/souvikghosh-git/MULTI-AI-AGENT-PROJECTS.git /tmp/build-repo
+          cd /tmp/build-repo
+          docker build -t ${EcrRepository}:latest .
+          aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+          docker tag ${EcrRepository}:latest ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}:latest
+          docker push ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}:latest
+
+          # Update ECS service to pick up the image
+          aws ecs update-service --cluster multi-ai-agent-cluster-${EnvironmentName} --service multi-ai-agent-service-${EnvironmentName} --force-new-deployment --region ${AWS::Region} || true
 
           # Start SonarQube
           docker run -d \

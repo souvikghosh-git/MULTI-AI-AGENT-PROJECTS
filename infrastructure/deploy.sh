@@ -8,7 +8,10 @@ set -e
 
 STACK_NAME=${1:-"multi-ai-agent-stack"}
 REGION=${AWS_REGION:-"us-east-1"}
-PROFILE=${AWS_PROFILE:-"443628962478_admin"}
+PROFILE_ARG=""
+if [ -n "$AWS_PROFILE" ]; then
+  PROFILE_ARG="--profile $AWS_PROFILE"
+fi
 ENV_NAME="prod"
 KEY_NAME="jenkins-key"
 
@@ -16,18 +19,21 @@ echo "==================================================================="
 echo "🚀 1-Click Multi-AI-Agent Deployment Starting..."
 echo "Stack:   $STACK_NAME"
 echo "Region:  $REGION"
-echo "Profile: $PROFILE"
+if [ -n "$AWS_PROFILE" ]; then
+  echo "Profile: $AWS_PROFILE"
+fi
 echo "==================================================================="
 
 # 1. Create SSH Key Pair if not already present
-if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region "$REGION" --profile "$PROFILE" >/dev/null 2>&1; then
+if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region "$REGION" $PROFILE_ARG >/dev/null 2>&1; then
   echo "🔑 Creating EC2 Key Pair '$KEY_NAME'..."
+  rm -f ~/"${KEY_NAME}.pem"
   aws ec2 create-key-pair \
     --key-name "$KEY_NAME" \
     --query "KeyMaterial" \
     --output text \
     --region "$REGION" \
-    --profile "$PROFILE" > ~/"${KEY_NAME}.pem"
+    $PROFILE_ARG > ~/"${KEY_NAME}.pem"
   chmod 400 ~/"${KEY_NAME}.pem"
   echo "✅ Key saved to ~/${KEY_NAME}.pem"
 else
@@ -40,7 +46,7 @@ VPC_ID=$(aws ec2 describe-vpcs \
   --query "Vpcs[0].VpcId" \
   --output text \
   --region "$REGION" \
-  --profile "$PROFILE")
+  $PROFILE_ARG)
 
 if [ -z "$VPC_ID" ] || [ "$VPC_ID" == "None" ]; then
   echo "❌ Error: Default VPC not found. Please specify a VPC ID manually."
@@ -54,7 +60,7 @@ SUBNET_IDS=$(aws ec2 describe-subnets \
   --query "Subnets[*].SubnetId" \
   --output text \
   --region "$REGION" \
-  --profile "$PROFILE" | tr '\t' ',')
+  $PROFILE_ARG | tr '\t' ',')
 
 echo "✅ Detected Subnets: $SUBNET_IDS"
 
@@ -94,12 +100,12 @@ aws cloudformation deploy \
       JenkinsInstanceType="m7i-flex.large" \
       JenkinsKeyName="$KEY_NAME" \
   --region "$REGION" \
-  --profile "$PROFILE"
+  $PROFILE_ARG
 
 echo "✅ CloudFormation Stack provisioned successfully!"
 
 # 6. Get Stack Outputs
-ACCOUNT_ID=$(aws sts get-caller-identity --profile "$PROFILE" --query "Account" --output text)
+ACCOUNT_ID=$(aws sts get-caller-identity $PROFILE_ARG --query "Account" --output text)
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/my-repo"
 CLUSTER_NAME="multi-ai-agent-cluster-${ENV_NAME}"
 SERVICE_NAME="multi-ai-agent-service-${ENV_NAME}"
@@ -107,7 +113,7 @@ SERVICE_NAME="multi-ai-agent-service-${ENV_NAME}"
 # 7. Build and Push Docker Image to ECR
 echo ""
 echo "🐳 Step 2/3: Building and Pushing Docker Image to ECR ($ECR_URI)..."
-aws ecr get-login-password --region "$REGION" --profile "$PROFILE" | docker login --username AWS --password-stdin "$ECR_URI"
+aws ecr get-login-password --region "$REGION" $PROFILE_ARG | docker login --username AWS --password-stdin "$ECR_URI"
 docker build -t "${ECR_URI}:latest" .
 docker push "${ECR_URI}:latest"
 echo "✅ Docker image pushed to ECR!"
@@ -120,7 +126,7 @@ aws ecs update-service \
   --service "$SERVICE_NAME" \
   --force-new-deployment \
   --region "$REGION" \
-  --profile "$PROFILE" > /dev/null
+  $PROFILE_ARG > /dev/null
 
 echo "⏳ Waiting for ECS task to start running..."
 sleep 25
@@ -130,7 +136,7 @@ TASK_ARN=$(aws ecs list-tasks \
   --service-name "$SERVICE_NAME" \
   --desired-status RUNNING \
   --region "$REGION" \
-  --profile "$PROFILE" \
+  $PROFILE_ARG \
   --query "taskArns[0]" --output text 2>/dev/null || echo "")
 
 TASK_IP=""
@@ -139,20 +145,20 @@ if [ -n "$TASK_ARN" ] && [ "$TASK_ARN" != "None" ]; then
     --cluster "$CLUSTER_NAME" \
     --tasks "$TASK_ARN" \
     --region "$REGION" \
-    --profile "$PROFILE" \
+    $PROFILE_ARG \
     --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" --output text)
 
   TASK_IP=$(aws ec2 describe-network-interfaces \
     --network-interface-ids "$ENI_ID" \
     --region "$REGION" \
-    --profile "$PROFILE" \
+    $PROFILE_ARG \
     --query "NetworkInterfaces[0].Association.PublicIp" --output text 2>/dev/null || echo "")
 fi
 
 JENKINS_IP=$(aws cloudformation describe-stacks \
   --stack-name "$STACK_NAME" \
   --region "$REGION" \
-  --profile "$PROFILE" \
+  $PROFILE_ARG \
   --query "Stacks[0].Outputs[?OutputKey=='JenkinsPublicIp'].OutputValue" --output text 2>/dev/null || echo "")
 
 echo ""
