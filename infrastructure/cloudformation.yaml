@@ -192,6 +192,46 @@ Resources:
       Roles:
         - !Ref JenkinsEc2Role
 
+  # Service account IAM User for Jenkins CI/CD Pipeline
+  JenkinsDeployUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "jenkins-deploy-${EnvironmentName}"
+      Policies:
+        - PolicyName: JenkinsPipelineDeploymentPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:GetRepositoryPolicy
+                  - ecr:DescribeRepositories
+                  - ecr:ListImages
+                  - ecr:DescribeImages
+                  - ecr:BatchGetImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                  - ecs:DescribeTasks
+                  - ecs:ListTasks
+                  - ecs:RegisterTaskDefinition
+                  - ecs:DescribeTaskDefinition
+                Resource: "*"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  JenkinsDeployAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref JenkinsDeployUser
+
   # =========================================================================
   # 5. Security Groups
   # =========================================================================
@@ -436,3 +476,11 @@ Outputs:
     Description: URL for SonarQube Web Console
     Condition: ShouldDeployJenkins
     Value: !Sub "http://${JenkinsInstance.PublicIp}:9000"
+
+  JenkinsDeployAccessKeyId:
+    Description: Access Key ID for Jenkins deployment user
+    Value: !Ref JenkinsDeployAccessKey
+
+  JenkinsDeploySecretAccessKey:
+    Description: Secret Access Key for Jenkins deployment user
+    Value: !GetAtt JenkinsDeployAccessKey.SecretAccessKey

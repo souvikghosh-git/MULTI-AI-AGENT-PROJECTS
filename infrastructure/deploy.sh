@@ -25,7 +25,11 @@ if [ -n "$AWS_PROFILE" ]; then
 fi
 echo "==================================================================="
 
-# 1. Create SSH Key Pair if not already present
+# 1. Ensure ECS Service-Linked Role exists in AWS Account
+echo "🔍 Checking ECS Service-Linked Role..."
+aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com "${AWS_OPTS[@]}" 2>/dev/null || true
+
+# 2. Create SSH Key Pair if not already present
 if ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" "${AWS_OPTS[@]}" >/dev/null 2>&1; then
   echo "🔑 Creating EC2 Key Pair '$KEY_NAME'..."
   rm -f ~/"${KEY_NAME}.pem"
@@ -162,6 +166,11 @@ JENKINS_IP=$(aws cloudformation describe-stacks \
   "${AWS_OPTS[@]}" \
   --query "Stacks[0].Outputs[?OutputKey=='JenkinsPublicIp'].OutputValue" --output text 2>/dev/null || echo "")
 
+JENKINS_KEY_ID=$(aws cloudformation describe-stacks \
+  --stack-name "$STACK_NAME" \
+  "${AWS_OPTS[@]}" \
+  --query "Stacks[0].Outputs[?OutputKey=='JenkinsDeployAccessKeyId'].OutputValue" --output text 2>/dev/null || echo "")
+
 echo ""
 echo "==================================================================="
 echo "🎉 DEPLOYMENT COMPLETE & LIVE!"
@@ -176,5 +185,8 @@ fi
 if [ -n "$JENKINS_IP" ] && [ "$JENKINS_IP" != "None" ]; then
   echo "⚙️  Jenkins CI/CD Dashboard: http://${JENKINS_IP}:8080"
   echo "🔍 SonarQube Quality Gate:  http://${JENKINS_IP}:9000"
+  if [ -n "$JENKINS_KEY_ID" ] && [ "$JENKINS_KEY_ID" != "None" ]; then
+    echo "🔑 Jenkins Deploy User Key:  $JENKINS_KEY_ID"
+  fi
 fi
 echo "==================================================================="
