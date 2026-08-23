@@ -8,9 +8,9 @@ from app.config.settings import settings
 
 def get_response_from_ai_agents(llm_id , query , allow_search ,system_prompt):
 
-    llm = ChatGroq(model=llm_id)
+    llm = ChatGroq(model=llm_id, api_key=settings.GROQ_API_KEY)
 
-    tools = [TavilySearchResults(max_results=2)] if allow_search else []
+    tools = [TavilySearchResults(max_results=2, tavily_api_key=settings.TAVILY_API_KEY)] if allow_search else []
 
     agent = create_react_agent(
         model=llm,
