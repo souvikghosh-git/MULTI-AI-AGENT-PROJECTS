@@ -1,5 +1,10 @@
+.env
 venv/
+__pycache__/
+*.py[cod]
+*$py.class
 MULTI_AI_AGENT.egg-info/
+*.egg-info/
 logs/
-.env.env
-venv/
+.DS_Store
+

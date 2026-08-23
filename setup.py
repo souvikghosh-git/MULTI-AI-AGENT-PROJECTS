@@ -6,7 +6,7 @@ with open("requirements.txt") as f:
 setup(
     name="MULTI-AI AGENT",
     version="0.1",
-    author="Sudhanshu",
+    author="Souvik",
     packages=find_packages(),
     install_requires = requirements,
 )
